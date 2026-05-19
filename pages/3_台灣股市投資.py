@@ -34,7 +34,6 @@ except Exception:
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_realtime_price(symbol):
-    """具備自動切換上市(.TW)與上櫃(.TWO)邏輯的報價函式"""
     try:
         symbol = str(symbol).strip()
         for suffix in [".TW", ".TWO"]:
@@ -109,7 +108,6 @@ def fetch_real_ranking_data():
     except: return None, None, None
 
 def extract_text_from_pdf(pdf_file):
-    """提取 PDF 檔案中的文字內容"""
     try:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
         text = ""
@@ -119,9 +117,7 @@ def extract_text_from_pdf(pdf_file):
     except Exception as e:
         return ""
 
-# 💡 全新修改：直接接收所有上傳的純文字並交給 AI 解析
 def generate_overall_ai_analysis(date_str, compiled_text, model_name):
-    """讀取所有籌碼文字，產生綜合 AI 報告與明日操作策略"""
     if not HAS_GEMINI_KEY: 
         return "⚠️ 未在 Secrets 中偵測到有效的 GEMINI_KEY。"
 
@@ -152,7 +148,6 @@ def generate_overall_ai_analysis(date_str, compiled_text, model_name):
         if "404" in err_msg and "is not found" in err_msg:
             return f"❌ 您的金鑰不支援模型【{model_name}】。 👉 **請嘗試從選單切換成其他模型再試一次！**"
         return f"產生分析報告失敗: {err_msg}"
-
 
 # ==========================================
 # 2. 介面排版
@@ -204,7 +199,7 @@ with tab1:
         if volume_df is not None: st.dataframe(volume_df, hide_index=True)
         else: st.warning("排行載入中")
 
-# ----------------- 分頁 2：籌碼追蹤 (AI 直通版) -----------------
+# ----------------- 分頁 2：籌碼追蹤 -----------------
 with tab2:
     st.markdown("### 🧠 當日整體籌碼 AI 綜合決策與明日建議")
     st.link_button("🔗 資料來源：券商分點進出查詢 (富邦)", "https://fubon-ebrokerdj.fbs.com.tw/Z/ZG/ZG_D.djhtm")
@@ -219,15 +214,11 @@ with tab2:
 
     st.markdown("#### 📤 九大籌碼資料上傳區")
     
-    # 建立上傳檔案的存放字典
     uploaded_data = {}
-    
-    # 利用 3x3 網格來排列上傳區，介面更乾淨
     cols = st.columns(3)
     for idx, entity in enumerate(entities):
         with cols[idx % 3]:
             st.markdown(f"**{entity}**")
-            # 支援多檔上傳 (例如同時上傳該分點的買超與賣超)
             files = st.file_uploader(f"上傳 {entity} 檔案", accept_multiple_files=True, type=['pdf', 'txt'], key=f"up_{entity}", label_visibility="collapsed")
             if files:
                 uploaded_data[entity] = files
@@ -237,7 +228,6 @@ with tab2:
 
     st.divider()
 
-    # 自動檢查是否 9 個機構都已上傳
     is_fully_ready = len(uploaded_data) == len(entities)
     if not is_fully_ready:
         st.warning("⚠️ 偵測到仍有部分分點或法人資料未上傳完畢。強烈建議全數上傳完成，以便 AI 進行最精準的交叉比對。")
@@ -262,7 +252,6 @@ with tab2:
             st.error("請至少上傳一份資料檔案讓 AI 閱讀喔！")
         else:
             with st.spinner(f"AI ({selected_model}) 正在統整研讀所有上傳的原始檔案，請稍候..."):
-                # 將所有上傳的 PDF/TXT 解析成一個巨大的字串餵給 AI
                 combo_text = ""
                 for ent, files in uploaded_data.items():
                     combo_text += f"\n\n=== 【{ent}】買賣超資料 ===\n"
@@ -272,13 +261,11 @@ with tab2:
                         else:
                             combo_text += f.getvalue().decode("utf-8", errors="ignore") + "\n"
 
-                # 呼叫 AI 產生報告
                 analysis_report = generate_overall_ai_analysis(date_str, combo_text, selected_model)
                 st.success("✅ AI 籌碼解析報告與操作建議生成完畢！")
                 st.markdown(f"#### 📝 {date_str} 籌碼綜合決策報告")
                 st.write(analysis_report)
 
-                # 下載按鈕
                 report_download = analysis_report.encode('utf-8-sig')
                 st.download_button(
                     label="📥 匯出 AI 決策報告 (TXT 檔)",
@@ -318,7 +305,12 @@ with tab3:
                 ticker_obj = yf.Ticker(ticker_full)
                 df_hist = ticker_obj.history(period=period_choice)
                 if not df_hist.empty:
-                    stock_info = ticker_obj.info 
+                    # 💡 核心修復：加入 try-except 避震器防止 Yahoo 阻擋 IP 導致崩潰
+                    try:
+                        stock_info = ticker_obj.info 
+                    except Exception:
+                        stock_info = {}
+                    
                     stock_name = stock_info.get('shortName', analyze_code)
                     break
                 
@@ -345,7 +337,9 @@ with tab3:
                     f_col1, f_col2, f_col3 = st.columns(3)
                     pe_ratio = stock_info.get('trailingPE', "N/A")
                     pb_ratio = stock_info.get('priceToBook', "N/A")
-                    dividend_yield = stock_info.get('dividendYield', 0) * 100
+                    dividend_yield = stock_info.get('dividendYield', 0)
+                    dividend_yield_display = f"{dividend_yield * 100:.2f} %" if dividend_yield else "N/A"
+                    
                     with f_col1:
                         st.metric("本益比 (PE)", f"{pe_ratio}")
                         st.caption("衡量回本速度，通常越低越便宜")
@@ -353,19 +347,22 @@ with tab3:
                         st.metric("股價淨值比 (PB)", f"{pb_ratio}")
                         st.caption("衡量資產價值，低於 1 可能被低估")
                     with f_col3:
-                        st.metric("現金股利殖利率", f"{dividend_yield:.2f} %")
+                        st.metric("現金股利殖利率", dividend_yield_display)
                         st.caption("一年領到的利息佔股價的比率")
                     st.divider()
                     f_col4, f_col5, f_col6 = st.columns(3)
                     eps = stock_info.get('trailingEps', "N/A")
-                    roe = stock_info.get('returnOnEquity', 0) * 100
-                    profit_margin = stock_info.get('profitMargins', 0) * 100
+                    roe = stock_info.get('returnOnEquity', 0)
+                    roe_display = f"{roe * 100:.2f} %" if roe else "N/A"
+                    profit_margin = stock_info.get('profitMargins', 0)
+                    pm_display = f"{profit_margin * 100:.2f} %" if profit_margin else "N/A"
+                    
                     with f_col4: st.metric("每股盈餘 (EPS)", f"{eps}")
-                    with f_col5: st.metric("股東權益報酬率 (ROE)", f"{roe:.2f} %")
-                    with f_col6: st.metric("淨利率", f"{profit_margin:.2f} %")
+                    with f_col5: st.metric("股東權益報酬率 (ROE)", roe_display)
+                    with f_col6: st.metric("淨利率", pm_display)
                     st.divider()
                     with st.expander("📖 查看公司產業簡介"):
-                        summary = stock_info.get('longBusinessSummary', "無相關中文描述")
+                        summary = stock_info.get('longBusinessSummary', "無相關描述 (或 Yahoo 阻擋連線)")
                         st.write(summary)
                 
                 st.divider()
